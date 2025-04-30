@@ -103,26 +103,81 @@ _zipedit_complete_archives() {
             local IFS=$'\n'
             local files=($(unzip -l "$zipfile" | tail -n +4 | head -n -2 | awk '{$1=$2=$3=""; print substr($0,4)}' | sed 's/^[ \t]*//' | sort))
 
-            # Generate completions
+            # Get the current path prefix and the part to complete
+            local prefix=""
+            local to_complete="$cur"
+
+            # If we have a path with directories, extract the prefix
+            if [[ "$cur" == */* ]]; then
+                prefix="${cur%/*}/"
+                to_complete="${cur##*/}"
+            fi
+
+            # Generate completions for the current directory level only
             local i
+            local matches=()
+
             for i in "${files[@]}"; do
-                if [[ "$i" == "$cur"* ]]; then
-                    # If the filename contains spaces, add quotes
-                    if [[ "$i" == *[[:space:]]* ]]; then
-                        COMPREPLY+=("\"$i\"")
-                    else
-                        COMPREPLY+=("$i")
+                # If we have a prefix, only consider files in that directory
+                if [[ -n "$prefix" ]]; then
+                    # Check if the file is in the current directory
+                    if [[ "$i" == "$prefix"* && "$i" != "$prefix" ]]; then
+                        # Extract the next path component
+                        local next_component="${i#$prefix}"
+                        next_component="${next_component%%/*}"
+
+                        # If this component matches our completion and isn't already in matches
+                        if [[ "$next_component" == "$to_complete"* ]]; then
+                            # Check if this is a directory by looking for more path components
+                            if [[ "$i" == *"$next_component/"* ]]; then
+                                # It's a directory, add trailing slash if not already there
+                                if [[ "$next_component" != */ ]] && ! [[ " ${matches[*]} " =~ " $next_component/ " ]]; then
+                                    matches+=("$next_component/")
+                                fi
+                            else
+                                # It's a file
+                                if ! [[ " ${matches[*]} " =~ " $next_component " ]]; then
+                                    matches+=("$next_component")
+                                fi
+                            fi
+                        fi
                     fi
+                else
+                    # We're at the root level, show only top-level entries
+                    if [[ "$i" != */* ]]; then
+                        # Direct file in root
+                        if [[ "$i" == "$to_complete"* ]]; then
+                            matches+=("$i")
+                        fi
+                    else
+                        # Directory in root
+                        local dir="${i%%/*}"
+                        if [[ "$dir" == "$to_complete"* ]] && ! [[ " ${matches[*]} " =~ " $dir/ " ]]; then
+                            matches+=("$dir/")
+                        fi
+                    fi
+                fi
+            done
+
+            # Generate completions
+            for i in "${matches[@]}"; do
+                # If the filename contains spaces, add quotes
+                if [[ "$i" == *[[:space:]]* ]]; then
+                    COMPREPLY+=("\"$prefix$i\"")
+                else
+                    COMPREPLY+=("$prefix$i")
                 fi
             done
 
             # If no matches found, use compgen
             if [ ${#COMPREPLY[@]} -eq 0 ]; then
-                COMPREPLY=($(compgen -W "$(printf '%q ' "${files[@]}")" -- "$cur"))
+                COMPREPLY=($(compgen -W "$(printf '%q ' "${matches[@]}")" -- "$cur"))
             fi
         fi
     fi
 }
 
 # Register the completion function
-complete -F _zipedit_complete_archives zipedit
+# Use -o nospace to prevent adding a space after directory names (with trailing slashes)
+# This allows continuous tab completion for navigating through directories
+complete -o nospace -F _zipedit_complete_archives zipedit
